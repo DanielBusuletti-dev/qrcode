@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Controle WhatsApp</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu;
+        max-width: 760px;
+        margin: 24px auto;
+        padding: 0 16px;
+        color: #222;
+      }
+      h1 {
+        font-size: 20px;
+        margin: 0 0 12px;
+      }
+      .row {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      label {
+        font-size: 14px;
+      }
+      input[type='text'],
+      input[type='password'] {
+        padding: 8px 10px;
+        border: 1px solid #ccc;
+        border-radius: 6px;
+        min-width: 260px;
+      }
+      button {
+        padding: 8px 12px;
+        border: 1px solid #555;
+        background: #fff;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      button.primary {
+        background: #111;
+        color: #fff;
+        border-color: #111;
+      }
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .card {
+        border: 1px solid #eee;
+        border-radius: 8px;
+        padding: 12px 14px 16px;
+        margin-bottom: 16px;
+      }
+      .muted {
+        color: #666;
+        font-size: 13px;
+      }
+      #qrimg {
+        border: 1px solid #eee;
+        border-radius: 8px;
+        padding: 8px;
+        max-width: 280px;
+        max-height: 280px;
+        background: #fafafa;
+      }
+      code {
+        background: #f2f2f2;
+        padding: 2px 4px;
+        border-radius: 4px;
+        font-size: 12px;
+      }
+    </style>
+
+    <script>
+      // Usa automaticamente o mesmo host do backend
+      const API_BASE = window.location.origin.replace(/\/$/, '');
+
+      const api = {
+        async status() {
+          const r = await fetch(`${API_BASE}/instance/status`);
+          if (!r.ok) throw new Error('status');
+          return r.json();
+        },
+        async qr() {
+          const r = await fetch(`${API_BASE}/instance/qr`);
+          if (!r.ok) throw new Error('no_qr');
+          return r.json();
+        },
+        async reset(secret) {
+          const r = await fetch(`${API_BASE}/instance/reset`, {
+            method: 'POST',
+            headers: { 'x-admin-secret': secret || '' },
+          });
+          if (!r.ok) throw new Error('reset_failed');
+          return r.json();
+        },
+        async restart() {
+          const r = await fetch(`${API_BASE}/instance/restart`, {
+            method: 'POST',
+          });
+          if (!r.ok) throw new Error('restart_failed');
+          return r.json();
+        },
+        async qrPng() {
+          const r = await fetch(
+            `${API_BASE}/instance/qr.png?ts=` + Date.now()
+          );
+          if (!r.ok) throw new Error('no_qr_png');
+          return r;
+        },
+      };
+
+      let polling = null;
+
+      async function renderSimple() {
+        const elStatus = document.getElementById('status');
+        const elHasQR = document.getElementById('hasqr');
+        const img = document.getElementById('qrimg');
+        const copy = document.getElementById('copy');
+
+        try {
+          const s = await api.status();
+          elStatus.textContent = s.status;
+          elHasQR.textContent = s.hasQR ? 'sim' : 'não';
+
+          if (s.hasQR) {
+            try {
+              const { qr } = await api.qr();
+              copy.value = qr;
+            } catch (_) {
+              copy.value = '';
+            }
+
+            const resp = await api.qrPng();
+            const blob = await resp.blob();
+            img.src = URL.createObjectURL(blob);
+            img.style.display = 'block';
+          } else {
+            img.style.display = 'none';
+            img.src = '';
+            copy.value = '';
+          }
+        } catch (e) {
+          elStatus.textContent = 'erro';
+        }
+      }
+
+      function startPolling() {
+        stopPolling();
+        polling = setInterval(renderSimple, 2000);
+      }
+
+      function stopPolling() {
+        if (polling) clearInterval(polling);
+        polling = null;
+      }
+
+      window.addEventListener('DOMContentLoaded', () => {
+        document
+          .getElementById('btn-refresh')
+          .addEventListener('click', renderSimple);
+        document
+          .getElementById('btn-start')
+          .addEventListener('click', startPolling);
+        document
+          .getElementById('btn-stop')
+          .addEventListener('click', stopPolling);
+
+        document
+          .getElementById('btn-reset')
+          .addEventListener('click', async () => {
+            const secret = document.getElementById('secret').value || '';
+            if (
+              !confirm(
+                'Resetar sessão? Você terá que escanear o QR novamente.'
+              )
+            )
+              return;
+            try {
+              await api.reset(secret);
+              alert('Reset solicitado. O serviço vai reiniciar.');
+            } catch {
+              alert('Falha ao resetar. Verifique o segredo.');
+            }
+          });
+
+        document
+          .getElementById('btn-restart')
+          .addEventListener('click', async () => {
+            if (!confirm('Reiniciar serviço agora? Sessão será mantida.'))
+              return;
+            try {
+              await api.restart();
+              alert('Reinício solicitado.');
+            } catch {
+              alert('Falha ao reiniciar.');
+            }
+          });
+
+        renderSimple();
+        startPolling();
+      });
+    </script>
+  </head>
+  <body>
+    <h1>Controle WhatsApp</h1>
+
+    <div class="card">
+      <div class="row">
+        <label>Status da conexão:</label>
+        <span id="status" class="muted">carregando...</span>
+      </div>
+      <div class="row">
+        <label>Tem QR pendente?</label>
+        <span id="hasqr" class="muted">-</span>
+      </div>
+      <div class="row" style="margin-top: 8px">
+        <button id="btn-refresh">Atualizar agora</button>
+        <button id="btn-start" class="primary">Iniciar auto-refresh</button>
+        <button id="btn-stop">Parar auto-refresh</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <div>
+          <p class="muted" style="margin-top: 0">
+            Aponte a câmera do WhatsApp para este QR para conectar:
+          </p>
+          <img id="qrimg" alt="QR Code" style="display: none" />
+        </div>
+      </div>
+      <div class="row" style="margin-top: 8px">
+        <label class="muted">Conteúdo do QR:</label>
+        <input type="text" id="copy" readonly />
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <input
+          type="password"
+          id="secret"
+          placeholder="ADMIN_SECRET para reset"
+        />
+        <button class="primary" id="btn-reset">Resetar sessão</button>
+        <button id="btn-restart">Reiniciar serviço</button>
+      </div>
+    </div>
+  </body>
+</html>
