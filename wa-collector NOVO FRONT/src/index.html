@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sistema QRCode - WhatsApp</title>
+  <style>
+    body { font-family: Arial, sans-serif; background:#0b1220; color:#e6e6e6; margin:0; }
+    .wrap { max-width: 780px; margin: 0 auto; padding: 24px; }
+    .card { background:#111a2e; border:1px solid #223155; border-radius: 14px; padding: 18px; }
+    h1 { margin: 0 0 12px 0; font-size: 22px; }
+    p { margin: 8px 0; color:#cfd6e6; }
+    .row { display:flex; gap:18px; flex-wrap: wrap; }
+    .col { flex: 1 1 320px; }
+    .qrbox { background:#0b1220; border:1px dashed #2d416e; border-radius: 14px; padding: 14px; display:flex; align-items:center; justify-content:center; min-height: 320px; }
+    img { max-width: 280px; width: 100%; height:auto; border-radius: 10px; background:#fff; padding: 10px; }
+    .muted { font-size: 12px; color:#9fb0d1; }
+    .status { display:inline-block; padding: 6px 10px; border-radius: 999px; border:1px solid #2d416e; font-size: 13px; }
+    .btn { cursor:pointer; border:1px solid #2d416e; background:#15203a; color:#e6e6e6; padding: 10px 12px; border-radius: 10px; font-weight:600; }
+    .btn:hover { background:#1a2a4e; }
+    input { width: 100%; box-sizing:border-box; padding: 10px 12px; border-radius: 10px; border:1px solid #2d416e; background:#0b1220; color:#e6e6e6; }
+    code { color:#a8c7ff; }
+    .err { color:#ffb3b3; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Conectar WhatsApp via QR Code</h1>
+      <p class="muted">Front no Vercel (sempre online) + Backend no Render (Baileys/WhatsApp)</p>
+
+      <p>
+        Backend: <code id="apiBase"></code>
+      </p>
+
+      <div class="row">
+        <div class="col">
+          <p>
+            Status: <span class="status" id="statusPill">Carregando…</span>
+          </p>
+          <p class="muted" id="statusMsg"></p>
+
+          <div class="qrbox" id="qrBox">
+            <div class="muted">Carregando QR…</div>
+          </div>
+
+          <p class="muted" id="lastUpdate"></p>
+
+          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top: 12px;">
+            <button class="btn" id="btnRefresh">Atualizar agora</button>
+            <button class="btn" id="btnReset">Resetar instância</button>
+          </div>
+        </div>
+
+        <div class="col">
+          <p>Se o reset estiver protegido por <code>x-admin-secret</code>, informe abaixo:</p>
+          <input id="secret" placeholder="ADMIN_SECRET (opcional)" />
+
+          <p class="muted" style="margin-top:12px;">
+            Dica: Se o Render “dormir”, o front continua online, mas o QR pode demorar a aparecer até o backend acordar.
+          </p>
+
+          <p class="muted">
+            Endpoints usados:
+            <br/>• <code>/instance/status</code>
+            <br/>• <code>/instance/qr</code>
+            <br/>• <code>/instance/qr.png</code>
+            <br/>• <code>/instance/reset</code>
+          </p>
+
+          <p class="muted err" id="errorBox"></p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  // ✅ API do Render (seu backend)
+  const API_BASE = "https://sistema-qrcode-zygl.onrender.com";
+
+  const el = (id) => document.getElementById(id);
+  el("apiBase").textContent = API_BASE;
+
+  const statusPill = el("statusPill");
+  const statusMsg  = el("statusMsg");
+  const qrBox      = el("qrBox");
+  const lastUpdate = el("lastUpdate");
+  const errorBox   = el("errorBox");
+
+  function setError(msg) {
+    errorBox.textContent = msg ? ("Erro: " + msg) : "";
+  }
+
+  function setStatus(text, extra) {
+    statusPill.textContent = text || "—";
+    statusMsg.textContent  = extra || "";
+  }
+
+  async function fetchJson(path) {
+    const r = await fetch(API_BASE + path, { cache: "no-store" });
+    if (!r.ok) throw new Error(`HTTP ${r.status} em ${path}`);
+    return r.json();
+  }
+
+  function renderQrImage() {
+    // usa o PNG do backend com cache-buster
+    const img = document.createElement("img");
+    img.alt = "QR Code";
+    img.src = `${API_BASE}/instance/qr.png?ts=${Date.now()}`;
+
+    qrBox.innerHTML = "";
+    qrBox.appendChild(img);
+  }
+
+  async function refresh() {
+    setError("");
+
+    try {
+      // 1) status
+      const st = await fetchJson("/instance/status");
+      const state = st?.state || "unknown";
+      setStatus(state, st?.message || "");
+
+      // 2) Se não estiver connected/open, tenta pegar QR e renderizar imagem
+      if (state !== "open" && state !== "connected") {
+        // seu backend tem /instance/qr (json) e /instance/qr.png (imagem)
+        // vamos chamar /instance/qr só pra garantir que o backend gere/atualize o QR
+        await fetchJson("/instance/qr").catch(() => null);
+        renderQrImage();
+      } else {
+        qrBox.innerHTML = "<div class='muted'>✅ Já conectado. QR não é necessário.</div>";
+      }
+
+      lastUpdate.textContent = "Última atualização: " + new Date().toLocaleString("pt-BR");
+    } catch (e) {
+      setStatus("offline", "Não consegui acessar o backend agora.");
+      qrBox.innerHTML = "<div class='muted'>Aguardando backend responder…</div>";
+      setError(e.message || String(e));
+    }
+  }
+
+  async function resetInstance() {
+    setError("");
+    const secret = el("secret").value || "";
+
+    try {
+      const r = await fetch(API_BASE + "/instance/reset", {
+        method: "POST",
+        headers: { "x-admin-secret": secret }
+      });
+
+      if (!r.ok) {
+        const t = await r.text().catch(() => "");
+        throw new Error(`HTTP ${r.status} no reset. ${t}`);
+      }
+
+      await refresh();
+      alert("Instância resetada com sucesso.");
+    } catch (e) {
+      setError(e.message || String(e));
+    }
+  }
+
+  el("btnRefresh").addEventListener("click", refresh);
+  el("btnReset").addEventListener("click", resetInstance);
+
+  // Atualiza automaticamente
+  refresh();
+  setInterval(refresh, 8000);
+</script>
+</body>
+</html>
